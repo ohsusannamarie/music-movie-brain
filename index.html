@@ -200,6 +200,14 @@ h2 { font-size: 1.75rem; }
 .toast { color: var(--cF); font-size: .86rem; min-height: 1.3em; }
 .foot { color: var(--muted); font-size: .8rem; margin-top: 34px; }
 @media (max-width: 430px) { .bar { grid-template-columns: 86px 1fr 46px; } .grid { grid-template-columns: 1fr; } }
+.warn { display: block; color: #ffb27a; font-size: .8rem; margin-top: 3px; }
+p.warn { margin: 2px 0 6px; font-size: .88rem; }
+.rbar { position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 60; background: var(--raise); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px 6px; display: none; box-shadow: 0 8px 30px #000a; max-width: 640px; margin: 0 auto; }
+.rbar.open { display: block; }
+.rbar b { font-size: .9rem; }
+textarea, input[type=date], input[type=file] { background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 8px; font: inherit; font-size: .85rem; }
+textarea { width: 100%; }
+.bmsg { color: var(--gold); font-size: .9rem; }
 </style>
 </head>
 <body>
@@ -219,6 +227,7 @@ h2 { font-size: 1.75rem; }
   <main id="view"></main>
   <p class="foot">Seen, queue and ratings are saved in this browser only. Your watched list and notes are pre-loaded as ratings. Change anything. Film data beyond the curated set comes from TMDB and the Wikipedia list of musical films. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
 </div>
+<div class="rbar" id="rbar" role="dialog" aria-label="What missed"></div>
 <div class="back" id="back"><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Film details"></div></div>
 
 <script src="fresh.js"></script>
@@ -554,7 +563,10 @@ if (!S.seed2) {
 }
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S));}catch(e){}}
 function st(id){return S.films[id]||{w:false,r:0,q:false};}
-function put(id,o){S.films[id]=o;save();}
+function today(){var d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
+function stamp(o){o.u=Date.now();if(o.w){if(!o.da)o.da=today();}else{delete o.da;delete o.dw;}if(!(o.r>0&&o.r<=2))delete o.why;return o;}
+function put(id,o){S.films[id]=stamp(o);save();}
+function putC(k,o){S.cat[k]=stamp(o);save();}
 
 var ui = {vibes:{},gens:{},types:{},fresh:true,spot:null,more:false,q:"",cat:"",gen:"",dec:"",status:"all",sort:"canon",open:null};
 
@@ -565,7 +577,7 @@ function sim(a,b){
   a.v.forEach(function(v){if(b.v.indexOf(v)>-1) s+=1.5;});
   return s;
 }
-function pseudo(o){return {id:o.k,c:o.kind||"M",g:o.g,y:o.y,v:o.v||[],k:"",ak:o.ak||"",d:""};}
+function pseudo(o){return {id:o.k,t:o.base,c:o.kind||"M",g:o.g,y:o.y,v:o.v||[],k:"",ak:o.ak||"",d:""};}
 function liked(){return F.filter(function(f){return st(f.id).r>=4;});}
 function affinity(f){
   var a=0; F.forEach(function(o){var r=st(o.id).r; if(r>=4) a+=sim(f,o)*(r-3); else if(r&&r<=2) a-=sim(f,o);});
@@ -583,7 +595,7 @@ function tile(f,o){
   return '<div class="tile'+(s.w?' seen':'')+'" style="--c:var(--c'+f.c+');--h:'+GEN[f.g][1]+'">'+
    '<button class="tile-main" data-a="open" data-id="'+f.id+'"><span class="rec"></span><span><span class="tt">'+esc(f.t)+'</span>'+
    '<span class="tm">'+f.y+' · '+CAT[f.c]+' · '+GEN[f.g][0]+(s.r?' · '+s.r+'★':'')+(BELT[f.id]?' · Belt '+BELT[f.id].b:'')+'</span>'+where(provOf(pkF(f)))+
-   (o.note?'<span class="tn">'+esc(f.n)+'</span>':'')+(o.why?'<span class="why">'+esc(o.why)+'</span>':'')+'</span></button>'+
+   (o.note?'<span class="tn">'+esc(f.n)+'</span>':'')+(o.why?'<span class="why">'+esc(o.why)+'</span>':'')+(o.warn?'<span class="warn">'+esc(o.warn)+'</span>':'')+'</span></button>'+
    '<div class="acts"><button class="ib'+(s.w?' full':'')+'" data-a="tw" data-id="'+f.id+'" aria-pressed="'+!!s.w+'" aria-label="Seen '+esc(f.t)+'">✓</button>'+
    (s.w?thumbs('data-id="'+f.id+'"',s.r,f.t):'<button class="ib q" data-a="tq" data-id="'+f.id+'" aria-pressed="'+!!s.q+'" aria-label="Queue '+esc(f.t)+'">+</button>')+'</div></div>';
 }
@@ -643,9 +655,9 @@ function presetPool(P){
     if(P.id==="car"&&o.belt) s+=(o.belt-5)*0.9;
     return {o:o,s:s*(o.tier===1?0.9:0.7)-(o.tier===1?0.3:1)+affinity(pseudo(o))*0.15-avoidPen(o)};
   })).filter(function(x){return x.s>2;}).sort(function(a,b){return b.s-a.s;});
-  return mix(R);
+  return mix(R.filter(okNow));
 }
-function closestLoved(f){var best=null,bs=0;liked().forEach(function(o){var s=sim(f,o);if(s>bs){bs=s;best=o;}});return best;}
+function closestLoved(f){var best=null,bs=0;TASTE.liked.forEach(function(o){var s=sim(f,o);if(s>bs){bs=s;best=o;}});return best;}
 function vQueue(){
   var Q=F.filter(function(f){return st(f.id).q;}).map(function(f){return {f:f,p:provOf(pkF(f))};}),DQ=deepQ().map(function(o){return {o:o,p:provOf(pkO(o))};});
   var all=Q.concat(DQ),m=mySvc(),nm=all.filter(function(x){return onMine(x.p);}).length,picked=MAJOR.filter(function(n){return m[n];}).length;
@@ -667,7 +679,95 @@ var BELT={};
 BELTRAW.forEach(function(l){var p=l.split("|");var id=slug(p[0])+p[1];if(byId[id])BELT[id]={b:+p[2],s:p[3],a:p[4]};});
 function spot(q){return "https://open.spotify.com/search/"+encodeURIComponent(q);}
 function spotBtn(label,q,cls){return '<a class="'+(cls||"btn")+'" href="'+spot(q)+'" target="_blank" rel="noopener" data-copy="'+esc(q)+'">'+label+'</a>';}
-function avoidPen(f){var A=S.avoid||{},n=0;f.v.forEach(function(v){if(A[v])n++;});return n*3;}
+var REASONS={slow:["Too slow","i"],sappy:["Too sappy","r"],dark:["Too dark","d"],silly:["Too silly","f"],music:["Not my music",null],lead:["The lead didn't work",null]};
+var KN={B:"biopic",D:"documentary",C:"concert film",M:"musical",F:"music story",S:"series"};
+var TASTE={liked:[],disliked:[],lean:{},leanG:{},reasons:{},nd:0};
+function computeTaste(){
+  var L=[],D=[],R={};
+  var add=function(x,s){if(s.r>=4)L.push(x);else if(s.r&&s.r<=2){D.push(x);(s.why||[]).forEach(function(r){if(REASONS[r])(R[r]=R[r]||[]).push(x);});}};
+  F.forEach(function(f){add(f,st(f.id));});
+  if(typeof DEEP!=="undefined")DEEP.forEach(function(o){var s=S.cat[o.k];if(s&&s.r&&o.tier<3)add(pseudo(o),s);});
+  var lean={},leanG={},has=function(f,v){return f.v.indexOf(v)>-1;};
+  if(D.length>=2)Object.keys(VIBE).forEach(function(v){var d=D.filter(function(f){return has(f,v);}).length,l=L.length?L.filter(function(f){return has(f,v);}).length/L.length:0,x=d/D.length-l;if(d>=2&&x>=0.2)lean[v]={x:x,d:d};});
+  Object.keys(R).forEach(function(r){var t=REASONS[r][1],list=R[r];
+    if(t){var n=list.filter(function(f){return has(f,t);}).length;if(n>=2){lean[t]=lean[t]||{x:0,d:n};lean[t].x+=0.1*n;lean[t].r=r;}}
+    if(r==="music"){var gc={};list.forEach(function(f){gc[f.g]=(gc[f.g]||0)+1;});Object.keys(gc).forEach(function(g){var lg=L.filter(function(f){return f.g===g;}).length;if(gc[g]>=2&&gc[g]>lg)leanG[g]=gc[g];});}});
+  TASTE={liked:L,disliked:D,lean:lean,leanG:leanG,reasons:R,nd:D.length};
+}
+function softPen(f){var p=0;f.v.forEach(function(v){var x=TASTE.lean[v];if(x)p+=Math.min(1.2,x.x*2);});if(TASTE.leanG[f.g])p+=0.8;return Math.min(2,p);}
+function avoidPen(f){var A=S.avoid||{},n=0;f.v.forEach(function(v){if(A[v])n++;});return n*3+softPen(f);}
+function whyLove(x,best){
+  best=best||closestLoved(x);var why="",warn="";
+  if(best){var sv=x.v.filter(function(v){return best.v.indexOf(v)>-1&&v!=="b";}).slice(0,2).map(function(v){return VIBE[v].toLowerCase();}),bits=[];
+    if(sv.length)bits.push(sv.join(" and "));
+    if(x.c===best.c)bits.push("another "+KN[x.c]);
+    if(x.g===best.g&&!sv.length)bits.push(GEN[x.g][0].toLowerCase()+" too");
+    var same=(x.ak&&x.ak===best.ak)||(x.k&&x.k===best.k);
+    why=(same?"Same artist as ":"Like ")+best.t+(bits.length?": "+bits.join(", "):"")+".";}
+  var hit=x.v.filter(function(v){return TASTE.lean[v]||(S.avoid&&S.avoid[v]);})[0];
+  if(hit){var L=TASTE.lean[hit],vn=VIBE[hit].toLowerCase();
+    warn=L&&L.r?"Heads up: it's "+vn+", and you've said “"+REASONS[L.r][0].toLowerCase()+"” before.":L?"Heads up: it's "+vn+", like "+L.d+" of your "+TASTE.nd+" skips.":"Heads up: it's "+vn+", which you asked to avoid.";}
+  else if(TASTE.leanG[x.g]) warn="Heads up: "+GEN[x.g][0].toLowerCase()+" hasn't landed for you lately.";
+  return {why:why,warn:warn};
+}
+function whyBlock(x,seen){if(seen)return "";var w=whyLove(x);if(!w.why&&!w.warn)return "";return '<div class="lab">Why you might love it</div>'+(w.why?'<p class="why" style="margin:4px 0">'+esc(w.why)+'</p>':'')+(w.warn?'<p class="warn">'+esc(w.warn)+'</p>':'');}
+function reasonChips(s,attr){return Object.keys(REASONS).map(function(r){var on=(s.why||[]).indexOf(r)>-1;return '<button class="chip" data-a="reason" data-r="'+r+'" '+attr+' aria-pressed="'+on+'">'+REASONS[r][0]+'</button>';}).join("");}
+function seenBlock(s,attr){if(!s.w)return "";
+  var h='<div class="lab">Your history</div><div class="row"><label class="tm">Watched on <input type="date" class="dwin" '+attr+' value="'+(s.dw||"")+'" max="'+today()+'" aria-label="Date watched"></label>'+(s.da?'<span class="tm">Marked seen '+fdate(s.da)+'</span>':'')+'</div>';
+  if(s.r&&s.r<=2) h+='<div class="lab">What missed?</div><div class="chips">'+reasonChips(s,attr)+'</div><p class="tn">Reasons nudge picks gently once two or more skips agree. One miss never rules out a whole kind of film.</p>';
+  return h;}
+function showRbar(){var el=document.getElementById("rbar");if(!el)return;var R=ui.rbar;if(!R){el.className="rbar";el.innerHTML="";return;}
+  var s=R.k?cst(R.k):st(R.id),name=R.k?(DEEPK[R.k]?DEEPK[R.k].base:""):(byId[R.id]?byId[R.id].t:""),attr=R.k?'data-k="'+esc(R.k)+'"':'data-id="'+R.id+'"';
+  el.innerHTML='<b>What missed in '+esc(name)+'?</b> <span class="tm">Optional</span><div class="chips">'+reasonChips(s,attr)+'</div><div class="row"><button class="btn" data-a="rbarx">Done</button></div>';el.className="rbar open";}
+function okNow(x){var P=S.prefs||{},f=x.f||x.o;if(P.mine&&!onMine(provOf(x.f?pkF(x.f):pkO(x.o))))return false;if(P.half&&!halfOK(x.f?x.f:pseudo(x.o)))return false;return true;}
+function halfOK(f){var v=f.v||[],has=function(c){return v.indexOf(c)>-1;};if(has("d")||has("i")&&!has("e"))return false;if(f.c==="C")return true;if(f.c==="M")return has("b")||has("e")||has("g")||has("f");if(f.c==="F"||f.c==="S")return has("e")||has("b");return false;}
+function qprior(o){var q=o.vc>=50?Math.max(-1.5,Math.min(0.8,(o.va-6.8)*0.8)):-0.4;if(/animated/.test(o.tag||""))q-=1;if(/TV film/.test(o.tag||""))q-=0.4;return q;}
+function recCands(){
+  return F.filter(function(f){return !st(f.id).w;}).map(function(f){return {f:f,p:f,s:affinity(f)-avoidPen(f)};})
+   .concat(DEEP.filter(function(o){return o.tier===1&&!cst(o.k).w;}).map(function(o){var p=pseudo(o);return {o:o,p:p,s:affinity(p)*0.85-avoidPen(p)-0.3+qprior(o)};})).filter(okNow);
+}
+function recList(n){
+  var C=recCands().sort(function(a,b){return b.s-a.s;}).slice(0,150),out=[],arts={};
+  var span=C.length?(C[0].s-C[Math.min(C.length-1,40)].s)||1:1;
+  while(out.length<n&&C.length){var bi=-1,bv=-1e9;
+    C.forEach(function(c,i){var a=c.p.ak||c.p.k;if(a&&arts[a])return;var ms=0;out.forEach(function(o){var s=sim(c.p,o.p);if(s>ms)ms=s;});var v=c.s/span-ms*0.09;if(v>bv){bv=v;bi=i;}});
+    if(bi<0)break;var c=C.splice(bi,1)[0];var a=c.p.ak||c.p.k;if(a)arts[a]=1;var bs=0,best=null;TASTE.liked.forEach(function(l){var s=sim(c.p,l);if(s>bs){bs=s;best=l;}});c.best=best;out.push(c);}
+  return out;
+}
+function trioPick(){
+  var C=F.filter(function(f){return !st(f.id).w;}).map(function(f){var t=TMC[f.id];return {f:f,p:f,va:t&&t[2]>=50?t[1]/10:7.4,vc:t?t[2]:0};})
+    .concat(DEEP.filter(function(o){return o.tier===1&&!cst(o.k).w;}).map(function(o){return {o:o,p:pseudo(o),va:o.va,vc:o.vc};})).filter(okNow);
+  C.forEach(function(x){x.a=affinity(x.p)-avoidPen(x.p);var bs=0;TASTE.liked.forEach(function(l){var s=sim(x.p,l);if(s>bs)bs=s;});x.bs=bs;});
+  var off=ui.tOff||0,pick=function(L,n,m){L=L.slice(0,n);return L.length?L[(off*m)%L.length]:null;};
+  var safe=pick(C.filter(function(x){return x.va>=7;}).sort(function(a,b){return b.a-a.a;}),7,1);
+  var gem=pick(C.filter(function(x){return x.o&&x.vc>=15&&x.vc<=400&&x.va>=6.8&&x!==safe;}).sort(function(a,b){return b.a-a.a;}),9,2);
+  var wild=pick(C.filter(function(x){return x.bs<6&&x.va>=7.2&&x.vc>=150&&avoidPen(x.p)===0&&x!==safe&&x!==gem;}).sort(function(a,b){return b.va-a.va;}),15,3);
+  return [safe,gem,wild];
+}
+function trioBlock(){
+  var h='<div class="vibe"><div class="eyebrow">Surprise me</div><p class="lede">Three picks: one safe, one hidden, one wild.</p>';
+  if(ui.trio){var T=trioPick(),lab=["Safest bet","Hidden gem","Wild card"],out=[];
+    T.forEach(function(x,i){if(!x)return;var w=whyLove(x.p),why=i===0?lab[0]+" · "+(w.why||"Close to your favorites."):i===1?lab[1]+" · only "+x.vc+" TMDB votes, rated "+x.va.toFixed(1):lab[2]+" · nothing like your usual, rated "+x.va.toFixed(1)+" by "+x.vc.toLocaleString();out.push(anyTile(x,{note:true,why:why,warn:w.warn}));});
+    h+=out.length?'<div class="grid">'+out.join("")+'</div>':'<p class="empty">Nothing fits your switches right now. Turn one off and try again.</p>';}
+  return h+'<div class="row"><button class="btn go" data-a="trio">'+(ui.trio?"Shuffle all three":"Surprise me")+'</button></div></div>';
+}
+function prefRow(){var P=S.prefs||{};return '<div class="row"><span class="tm">Tonight</span><button class="chip" data-a="pref" data-v="mine" aria-pressed="'+!!P.mine+'">On my services</button><button class="chip" data-a="pref" data-v="half" aria-pressed="'+!!P.half+'">Half-watching</button></div>'+(P.half?'<p class="tn">Half-watching keeps it to concert films, sing-along musicals and high-energy stories. Nothing plot-heavy or dark.</p>':'');}
+function backupObj(){return {app:"music-movie-brain",v:1,saved:new Date().toISOString(),state:S};}
+function restoreFrom(txt,mode){var b;try{b=JSON.parse(String(txt).trim());}catch(e){return "That isn't a valid backup code.";}
+  if(!b||b.app!=="music-movie-brain"||!b.state)return "That isn't a Music Movie Brain backup.";
+  var B=b.state,when=fdate(String(b.saved).slice(0,10));
+  if(mode==="replace"){S=B;if(!S.films)S.films={};if(!S.cat)S.cat={};S.seeded=true;S.seed2=true;S.svcSeed=1;save();return "Replaced with your backup from "+when+".";}
+  var n=0,diff=function(a,x){return JSON.stringify([a.w,a.q,a.r,a.dw,a.why])!==JSON.stringify([x.w,x.q,x.r,x.dw,x.why]);};
+  ["films","cat"].forEach(function(t){var L=S[t]||(S[t]={}),R=B[t]||{};Object.keys(R).forEach(function(k){var a=L[k],x=R[k];if(!a||(x.u||0)>(a.u||0)||(!a.u&&!x.u&&diff(a,x))){L[k]=x;n++;}});});
+  ["avoid","radar","svc","prefs"].forEach(function(t){if(B[t]){S[t]=S[t]||{};Object.keys(B[t]).forEach(function(k){if(!(k in S[t]))S[t][k]=B[t][k];});}});
+  S.svcSeed=1;save();return "Merged your backup from "+when+": "+n+" title"+(n===1?"":"s")+" updated. Anything newer in this browser was kept.";}
+function dataBlock(){
+  var h='<h2>Your data</h2><p class="lede">Ratings, queue, reasons and watch dates live in this browser only. Back up now and then, and use the same backup to move to another device.'+(S.lastBackup?' Last backup '+fdate(S.lastBackup)+'.':' No backup yet.')+'</p>';
+  if(ui.bmsg) h+='<p class="bmsg" role="status">'+esc(ui.bmsg)+'</p>';
+  h+='<div class="row"><button class="btn go" data-a="bdl">Download backup</button><button class="btn" data-a="bcopy">Copy backup code</button><span class="toast" id="btoast" role="status"></span></div>';
+  h+='<div class="lab">Restore</div><p class="tn">Paste a backup code or pick a backup file. <b>Merge</b> keeps whichever version of each title is newer. <b>Replace</b> wipes this browser and loads the backup exactly.</p>';
+  h+='<textarea id="rtxt" rows="3" placeholder="Paste a backup code" aria-label="Backup code"></textarea><div class="row"><input type="file" id="rfile" accept="application/json,.json" aria-label="Backup file"></div>';
+  return h+'<div class="row"><button class="btn" data-a="rmerge">Merge</button><button class="btn" data-a="rreplace">Replace</button></div>';}
 function beltBlock(f){
   var B=BELT[f.id],h="";
   if(B) h+='<div class="belt"><span>Belt-o-meter</span><span class="tr"><u style="width:'+(B.b*10)+'%"></u></span><b>'+B.b+'/10</b></div>';
@@ -684,13 +784,13 @@ function vDial(){
   var pool=presetPool(P),off=(ui.pOff||0)%Math.max(1,Math.min(pool.length,12)),picks=[];
   for(var i=0;i<3&&i<pool.length;i++) picks.push(pool[(off+i)%Math.min(pool.length,12)]);
   h+='<div class="vibe"><div class="eyebrow">Now playing</div><h3>'+esc(P.name)+'</h3><p class="lede">'+esc(P.tag)+'</p>';
-  h+=picks.length?'<div class="grid">'+picks.map(function(x){var c=closestLoved(x.f||pseudo(x.o));return anyTile(x,{note:true,why:c?"Because you loved "+c.t:""});}).join("")+'</div>':'<p class="empty">You have seen everything this mood had to offer. Try another dial.</p>';
+  h+=picks.length?'<div class="grid">'+picks.map(function(x){var w=whyLove(x.f||pseudo(x.o));return anyTile(x,{note:true,why:w.why,warn:w.warn});}).join("")+'</div>':'<p class="empty">You have seen everything this mood had to offer. Try another dial.</p>';
   if(pool.length>3) h+='<div class="row"><button class="btn go" data-a="deal">Deal me three more</button><span class="tm">'+Math.min(pool.length,12)+' strong matches in this mood</span></div>';
   return h+'</div>';
 }
 function vDiscover(){
   var any=keys(ui.vibes).length+keys(ui.gens).length+keys(ui.types).length;
-  var h=landStrip("discover")+vDial()+'<h2>Mood mixer</h2><p class="lede">Or build your own. Stack a few moods. The engine ranks every film by how many it hits, then nudges toward what you have rated highly.</p>';
+  var h=prefRow()+landStrip("discover")+trioBlock()+vDial()+'<h2>Mood mixer</h2><p class="lede">Or build your own. Stack a few moods. The engine ranks every film by how many it hits, then nudges toward what you have rated highly.</p>';
   h+='<div class="lab">Mood</div><div class="chips">'+chipset(VIBE,"vibes",ui.vibes,true)+'</div>';
   h+='<div class="lab">Sound</div><div class="chips">'+chipset(GEN,"gens",ui.gens)+'</div>';
   h+='<div class="lab">Kind</div><div class="chips">'+chipset(CAT,"types",ui.types)+'</div>';
@@ -700,16 +800,16 @@ function vDiscover(){
   if(ui.spot&&byId[ui.spot]){var f=byId[ui.spot];
     h+='<div class="spot" style="--h:'+GEN[f.g][1]+'"><span class="rec"></span><div><div class="eyebrow">The needle landed on</div><h3>'+esc(f.t)+' ('+f.y+')</h3><div class="tn">'+esc(f.n)+'</div><div class="row"><button class="btn" data-a="open" data-id="'+f.id+'">Details</button><button class="btn" data-a="tq" data-id="'+f.id+'">'+(st(f.id).q?"In queue":"Add to queue")+'</button></div></div></div>';}
   if(any){
-    var pool=mix(discoverPool().sort(function(a,b){return b.score-a.score;}));
+    var pool=mix(discoverPool().filter(okNow).sort(function(a,b){return b.score-a.score;}));
     var show=ui.more?pool.slice(0,60):pool.slice(0,12);
     h+='<h2>'+pool.length+' match'+(pool.length===1?"":"es")+'</h2>';
-    h+=pool.length?'<div class="grid">'+show.map(function(x){return anyTile(x,{note:true,why:x.why});}).join("")+'</div>':'<p class="empty">Nothing hits that combination. Drop a filter or turn off Unseen only.</p>';
+    h+=pool.length?'<div class="grid">'+show.map(function(x){var w=whyLove(x.f||pseudo(x.o));return anyTile(x,{note:true,why:x.why,warn:w.warn});}).join("")+'</div>':'<p class="empty">Nothing hits that combination. Drop a filter or turn off Unseen only.</p>';
     if(pool.length>12&&!ui.more) h+='<div class="row"><button class="btn" data-a="more">Show more</button></div>';
   } else {
-    var L=liked();
+    var L=TASTE.liked;
     if(L.length){
-      var rec=F.filter(function(f){return !st(f.id).w;}).map(function(f){var best=null,bs=0;L.forEach(function(o){var s=sim(f,o);if(s>bs){bs=s;best=o;}});return {f:f,s:affinity(f)-avoidPen(f),best:best};}).concat(DEEP.filter(function(o){return o.tier===1&&!cst(o.k).w;}).map(function(o){var p=pseudo(o),best=null,bs=0;L.forEach(function(x){var s=sim(p,x);if(s>bs){bs=s;best=x;}});return {o:o,s:affinity(p)*0.85-avoidPen(o)-0.3,best:best};})).sort(function(a,b){return b.s-a.s;}).slice(0,8);
-      h+='<h2>Because of what you love</h2><p class="lede">Unseen titles closest to your four and five star ratings, from the curated set and the 1,000 most-watched deep cuts.</p><div class="grid">'+rec.map(function(x){return anyTile(x,{note:true,why:x.best?"Closest to "+x.best.t:""});}).join("")+'</div>';
+      var rec=recList(8);
+      h+='<h2>Because of what you love</h2><p class="lede">Unseen titles closest to your four and five star ratings, from the curated set and the 1,000 most-watched deep cuts.</p><div class="grid">'+rec.map(function(x){var w=whyLove(x.f||pseudo(x.o),x.best);return anyTile(x,{note:true,why:w.why,warn:w.warn});}).join("")+'</div>';
     }
     h+='<h2>The canon starters</h2><p class="lede">The titles nearly every critics list agrees on.</p><div class="grid">'+STARTERS.map(T).filter(Boolean).map(function(f){return tile(f,{note:true});}).join("")+'</div>';
   }
@@ -823,6 +923,8 @@ function vTaste(){
   h+='<h2>Seen by decade</h2><p class="lede">Curated titles and deep cuts together.</p><div class="bars">'+drows+'</div>';
   var D=F.filter(function(f){var r=st(f.id).r;return r&&r<=2;}).concat(DEEP.filter(function(o){var r=cst(o.k).r;return o.tier<3&&r&&r<=2;}).map(pseudo)),U=L;
   h+='<h2>What loses you</h2>';
+  var RC=Object.keys(TASTE.reasons).map(function(r){return [r,TASTE.reasons[r].length];}).sort(function(a,b){return b[1]-a[1];});
+  if(RC.length) h+='<p class="tn">Your reasons so far: '+RC.map(function(x){return REASONS[x[0]][0].toLowerCase()+' ('+x[1]+')';}).join(" \u00b7 ")+'. They count as evidence once two skips agree, and only nudge picks.</p>';
   if(D.length>=3&&U.length){
     var share=function(L,v){return L.filter(function(f){return f.v.indexOf(v)>-1;}).length/L.length;};
     var traits=Object.keys(VIBE).map(function(v){return [v,share(D,v)-share(U,v),D.filter(function(f){return f.v.indexOf(v)>-1;}).length,U.filter(function(f){return f.v.indexOf(v)>-1;}).length];}).filter(function(x){return x[1]>=0.2&&x[2]>=2;}).sort(function(a,b){return b[1]-a[1];}).slice(0,3);
@@ -846,6 +948,7 @@ function vTaste(){
   h+='<h2>The queue</h2><p class="lede">'+(Q.length+DQ.length)+' queued. <a href="#queue">Open your queue</a> to see what is streaming where.</p>';
   if(false) h+=''+(Q.length?'<div class="grid">'+Q.map(function(f){return tile(f);}).join("")+'</div>':(DQ.length?'':'<p class="empty">Nothing queued yet. Tap + on any film.</p>'));
   
+  h+=dataBlock();
   h+='<div class="row"><button class="btn" data-a="copyq">Copy queue as text</button><button class="btn" data-a="reset" id="reset">Reset everything</button><span class="toast" id="toast" role="status"></span></div>';
   return h;
 }
@@ -861,7 +964,7 @@ function deepSheet(b,el){
   h+='<div class="row">'+spotBtn("▶ Soundtrack on Spotify",o.base+" soundtrack")+'</div><span class="sq">Search: '+esc(o.base+" soundtrack")+'</span><span class="ctoast" id="ctoast" role="status"></span>';
   if(o.v.length) h+='<div class="lab">Moods</div><div>'+o.v.map(function(v){return '<span class="vt">'+VIBE[v]+'</span>';}).join("")+'<span class="vt">'+GEN[o.g][0]+'</span></div><p class="tn">'+(o.tier===1?'Hand-tagged.':'Auto-tagged from the synopsis and genres, so treat it as a rough guide.')+'</p>';
   if(o.belt) h+='<div class="belt"><span>Belt-o-meter</span><span class="tr"><u style="width:'+(o.belt*10)+'%"></u></span><b>'+o.belt+'/10</b></div>';
-  h+=artChips(o.k);
+  h+=whyBlock(p,s.w)+seenBlock(s,'data-k="'+esc(o.k)+'"')+artChips(o.k);
   h+=whereBlock(provOf(pkO(o)),o.tid,o.tv?"tv":"movie");
   if(o.tid) h+='<div class="row"><a class="btn" href="https://www.themoviedb.org/'+(o.tv?"tv":"movie")+'/'+o.tid+'" target="_blank" rel="noopener">Open on TMDB</a></div>';
   if(era.length) h+='<div class="lab">'+(o.tier<3?"Plays well with":"Same era in the brain")+'</div><div class="grid" style="margin-top:6px">'+era.map(function(f){return tile(f);}).join("")+'</div>';
@@ -881,7 +984,7 @@ function sheet(){
   var tc=TMC[f.id]; if(tc&&tc[2]) h+='<p class="tm">TMDB '+(tc[1]/10).toFixed(1)+' from '+tc[2].toLocaleString()+' votes · <a href="https://www.themoviedb.org/'+(tc[3]||"movie")+'/'+tc[0]+'" target="_blank" rel="noopener">Open on TMDB</a></p>';
   h+='<p>'+esc(f.n)+'</p>'+(NOTE[f.id]?'<p class="why">Your note: '+esc(NOTE[f.id])+'</p>':'')+'<div>'+f.v.map(function(v){return '<span class="vt">'+VIBE[v]+'</span>';}).join("")+'</div>';
   h+='<div class="row"><button class="chip" data-a="tw" data-id="'+f.id+'" aria-pressed="'+!!s.w+'">'+(s.w?"✓ Seen":"Mark seen")+'</button><button class="chip" data-a="tq" data-id="'+f.id+'" aria-pressed="'+!!s.q+'">'+(s.q?"In queue":"+ Queue")+'</button><span class="stars">'+stars+'</span></div>';
-  h+=beltBlock(f)+artChips("c:"+f.id);
+  h+=whyBlock(f,s.w)+seenBlock(s,'data-id="'+f.id+'"')+beltBlock(f)+artChips("c:"+f.id);
   h+=whereBlock(provOf(pkF(f)),tc&&tc[0],tc&&tc[3]);
   pr.forEach(function(p){var o=p.a===f?p.b:p.a;h+='<div class="lab">Double feature</div><p class="why" style="margin:4px 0">'+esc(p.why)+'</p>'+tile(o);});
   if(inH.length) h+='<div class="lab">Part of</div><div class="chips">'+inH.map(function(x){return '<button class="chip" data-a="gohole" data-i="'+holes.indexOf(x)+'">'+esc(x.name)+'</button>';}).join("")+'</div>';
@@ -916,7 +1019,7 @@ function tileD(o,x){
   return '<div class="tile'+(s.w?' seen':'')+'" style="--c:var(--c'+o.kind+');--h:'+GEN[o.g][1]+'">'+
    '<button class="tile-main" data-a="copen" data-k="'+k+'"><span class="rec"></span><span><span class="tt">'+esc(o.base)+'</span>'+
    '<span class="tm">'+o.y+' · '+CAT[o.kind]+' · '+GEN[o.g][0]+(s.r?' · '+s.r+'★':'')+(o.belt?' · Belt '+o.belt:'')+(o.tier===2?' · auto-tagged':'')+'</span>'+where(provOf(pkO(o)))+
-   (x.note&&o.ov?'<span class="tn">'+esc(o.ov.length>140?o.ov.slice(0,137)+'…':o.ov)+'</span>':'')+(x.why?'<span class="why">'+esc(x.why)+'</span>':'')+'</span></button>'+
+   (x.note&&o.ov?'<span class="tn">'+esc(o.ov.length>140?o.ov.slice(0,137)+'…':o.ov)+'</span>':'')+(x.why?'<span class="why">'+esc(x.why)+'</span>':'')+(x.warn?'<span class="warn">'+esc(x.warn)+'</span>':'')+'</span></button>'+
    '<div class="acts"><button class="ib'+(s.w?' full':'')+'" data-a="cw" data-k="'+k+'" aria-pressed="'+!!s.w+'" aria-label="Seen '+esc(o.base)+'">✓</button>'+
    (s.w?thumbs('data-k="'+k+'"',s.r,o.base):'<button class="ib q" data-a="cq" data-k="'+k+'" aria-pressed="'+!!s.q+'" aria-label="Queue '+esc(o.base)+'">+</button>')+'</div></div>';
 }
@@ -943,7 +1046,7 @@ function landStrip(where){
   L.sort(function(a,b){return (isQ(b.x)-isQ(a.x))||(b.d<a.d?-1:b.d>a.d?1:0);});
   if(!L.length) return "";
   var q=L.filter(function(e){return isQ(e.x);}).length;
-  return '<div class="vibe"><div class="eyebrow">Just landed on your services</div><p class="lede">'+L.length+' in the last four weeks'+(q?', '+q+' from your queue':'')+'. Updated '+fdate(FR.asof)+'.</p><div class="grid">'+L.slice(0,where==="discover"?4:24).map(function(e){return anyTile(e.x,{why:(isQ(e.x)?"From your queue · ":"")+"New on "+e.on.join(", ")});}).join("")+'</div>'+(L.length>4&&where==="discover"?'<div class="row"><a class="btn" href="#new">See all of What\'s new</a></div>':'')+'</div>';
+  return '<div class="vibe"><div class="eyebrow">Just landed on your services</div><p class="lede">'+L.length+' in the last four weeks'+(q?', '+q+' from your queue':'')+'. Updated '+fdate(FR.asof)+'.</p><div class="grid">'+L.slice(0,where==="discover"?2:24).map(function(e){return anyTile(e.x,{why:(isQ(e.x)?"From your queue · ":"")+"New on "+e.on.join(", ")});}).join("")+'</div>'+(L.length>2&&where==="discover"?'<div class="row"><a class="btn" href="#new">See all of What\'s new</a></div>':'')+'</div>';
 }
 function vNew(){
   if(!FR) return '<h2>What\'s new</h2><p class="empty">The weekly refresh hasn\'t run yet. Check back after it does.</p>';
@@ -966,7 +1069,7 @@ function vNew(){
     h+='<div class="crow"><div class="cmain"><b>'+esc(x[1])+'</b><small>'+fdate(x[2])+' · '+(CAT[x[3]]||"")+'</small><small>'+esc(x[4].length>150?x[4].slice(0,147)+"…":x[4])+'</small></div><span class="cacts"><button class="chip" data-a="radar" data-i="'+x[0]+'" aria-pressed="'+!!S.radar[x[0]]+'">'+(S.radar[x[0]]?"✓ Auto-queue":"Auto-queue")+'</button></span></div>';});
   return h;
 }
-(function(){if(!S.radar)return;var ch=false;Object.keys(S.radar).forEach(function(i){var d=RD[i],o=DEEPK["tmdb:"+i];if(S.radar[i]&&d&&d<=TODAY&&o){var s=cst(o.k);if(!s.w&&!s.q){s.q=true;S.cat[o.k]=s;}delete S.radar[i];ch=true;}});if(ch)save();})();
+(function(){if(!S.radar)return;var ch=false;Object.keys(S.radar).forEach(function(i){var d=RD[i],o=DEEPK["tmdb:"+i];if(S.radar[i]&&d&&d<=TODAY&&o){var s=cst(o.k);if(!s.w&&!s.q){s.q=true;S.cat[o.k]=stamp(s);}delete S.radar[i];ch=true;}});if(ch)save();})();
 function pkO(o){return o.tv?"v:"+o.tid:o.k.indexOf("tmdb:")===0?"t:"+o.tid:"w:"+o.k;}
 function pkF(f){return "c:"+f.id;}
 function onMine(p){var m=mySvc();return !!p&&p.s.concat(p.f).some(function(n){return m[n];});}
@@ -1065,6 +1168,7 @@ function vSeries(){
 var VIEWS={"new":vNew,"queue":vQueue,"artists":vArtists,"series":vSeries,"deep-catalog":vCatalog,"discover":vDiscover,"rabbit-holes":vHoles,"double-features":vPairs,"library":vLibrary,"timeline":vTimeline,"taste":vTaste};
 function cur(){var h=location.hash.replace("#","");if(h==="deep-catalog")return "library";if(h.indexOf("artist-")===0)return ABYS[h.slice(7)]?"artist":"artists";return VIEWS[h]&&h!=="deep-catalog"?h:"discover";}
 function render(keepScroll){
+  computeTaste();
   var v=cur(),tl=document.getElementById("tl"),sx=tl?tl.scrollLeft:null;
   document.querySelectorAll("#nav a").forEach(function(a){if(a.getAttribute("href")==="#"+(v==="artist"?"artists":v))a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");});
   document.getElementById("view").innerHTML=v==="artist"?vArtist(ABYS[location.hash.slice(8)]):VIEWS[v]();
@@ -1072,6 +1176,7 @@ function render(keepScroll){
   var t2=document.getElementById("tl"); if(t2) t2.scrollLeft=sx!==null?sx:t2.scrollWidth*0.55;
 }
 function refresh(){
+  computeTaste();
   var v=cur(),cl=document.getElementById("clist"),gr=document.getElementById("grid");
   if(v==="deep-catalog"&&cl){cl.innerHTML=catList();header();sheet();}
   else if(v==="library"&&gr){gr.innerHTML=libGrid();header();sheet();}
@@ -1092,9 +1197,9 @@ document.addEventListener("click",function(e){
   if(act==="close"){ui.open=null;ui.ocat=null;sheet();return;}
   if(act==="th"){var tv=a.getAttribute("data-v"),tk=a.getAttribute("data-k"),to=tk?cst(tk):st(id);
     if(tv==="up") to.r=to.r>=4?0:4; else to.r=(to.r&&to.r<=2)?0:2;
-    to.w=true;to.q=false; if(tk){S.cat[tk]=to;save();}else put(id,to); refresh(); return;}
+    to.w=true;to.q=false; if(tk)putC(tk,to);else put(id,to); if(to.r===2){ui.rbar={k:tk,id:tk?null:id};} else ui.rbar=null; refresh(); showRbar(); return;}
   if(act==="copen"){ui.ocat=a.getAttribute("data-k");ui.open=null;sheet();document.getElementById("sheet").scrollTop=0;return;}
-  if(act==="cw"||act==="cq"||act==="cstar"){var ck=a.getAttribute("data-k"),cs=cst(ck);if(act==="cw"){cs.w=!cs.w;if(cs.w)cs.q=false;else cs.r=0;}else if(act==="cq"){cs.q=!cs.q;}else{var cn=+a.getAttribute("data-n");cs.r=cs.r===cn?0:cn;if(cs.r){cs.w=true;cs.q=false;}}S.cat[ck]=cs;save();refresh();return;}
+  if(act==="cw"||act==="cq"||act==="cstar"){var ck=a.getAttribute("data-k"),cs=cst(ck);if(act==="cw"){cs.w=!cs.w;if(cs.w)cs.q=false;else cs.r=0;}else if(act==="cq"){cs.q=!cs.q;}else{var cn=+a.getAttribute("data-n");cs.r=cs.r===cn?0:cn;if(cs.r){cs.w=true;cs.q=false;}}putC(ck,cs);refresh();return;}
   if(act==="cdec"){ui.cdec=a.getAttribute("data-d");ui.cq="";render();return;}
   if(act==="cstage"||act==="conly"){ui[act]=!ui[act];render();return;}
   if(a.getAttribute("data-cat")&&(act==="tw"||act==="tq")){s=st(id);if(act==="tw"){s.w=!s.w;if(s.w)s.q=false;else s.r=0;}else s.q=!s.q;put(id,s);refresh();return;}
@@ -1108,6 +1213,14 @@ document.addEventListener("click",function(e){
   else if(act==="qf"){ui.qf=a.getAttribute("data-v");}
   else if(act==="sf"){ui.sf=a.getAttribute("data-v");}
   else if(act==="nmore"){ui.nmore=true;}
+  else if(act==="pref"){if(!S.prefs)S.prefs={};var pv=a.getAttribute("data-v");S.prefs[pv]=!S.prefs[pv];save();}
+  else if(act==="trio"){ui.tOff=ui.trio?(ui.tOff||0)+1:(ui.tOff||0);ui.trio=true;}
+  else if(act==="rbarx"){ui.rbar=null;showRbar();return;}
+  else if(act==="reason"){var rk=a.getAttribute("data-k"),rid=a.getAttribute("data-id"),rr=a.getAttribute("data-r"),rs=rk?cst(rk):st(rid);rs.why=rs.why||[];var ix=rs.why.indexOf(rr);if(ix>-1)rs.why.splice(ix,1);else rs.why.push(rr);if(rk)putC(rk,rs);else put(rid,rs);computeTaste();showRbar();if(ui.open||ui.ocat)sheet();return;}
+  else if(act==="bdl"){var bt=document.getElementById("btoast");try{var blob=new Blob([JSON.stringify(backupObj())],{type:"application/json"}),ln=document.createElement("a");ln.href=URL.createObjectURL(blob);ln.download="music-brain-backup-"+today()+".json";document.body.appendChild(ln);ln.click();ln.remove();S.lastBackup=today();save();if(bt)bt.textContent="Saved. If nothing downloaded, use Copy backup code.";}catch(err){if(bt)bt.textContent="Download is blocked here. Use Copy backup code.";}return;}
+  else if(act==="bcopy"){var bt2=document.getElementById("btoast"),code=JSON.stringify(backupObj());try{navigator.clipboard.writeText(code).then(function(){S.lastBackup=today();save();if(bt2)bt2.textContent="Copied. Paste it somewhere safe, like Notes.";},function(){if(bt2)bt2.textContent="Copy is blocked here.";});}catch(err){if(bt2)bt2.textContent="Copy is blocked here.";}return;}
+  else if(act==="rmerge"){ui.bmsg=restoreFrom((document.getElementById("rtxt")||{}).value||"","merge");}
+  else if(act==="rreplace"){if(a.getAttribute("data-armed")!=="1"){a.setAttribute("data-armed","1");a.textContent="Tap again to replace everything";return;}ui.bmsg=restoreFrom((document.getElementById("rtxt")||{}).value||"","replace");}
   else if(act==="radar"){if(!S.radar)S.radar={};var ri=a.getAttribute("data-i");S.radar[ri]=!S.radar[ri];if(!S.radar[ri])delete S.radar[ri];save();}
   else if(act==="asort"){ui.asort=a.getAttribute("data-v");document.getElementById("alist").innerHTML=aList();return;}
   else if(act==="avoid"){if(!S.avoid)S.avoid={};var av=a.getAttribute("data-v");S.avoid[av]=!S.avoid[av];save();}
@@ -1125,7 +1238,9 @@ document.addEventListener("toggle",function(e){var d=e.target;if(d.classList&&d.
 document.addEventListener("input",function(e){if(e.target.id==="aq"){ui.aq=e.target.value;document.getElementById("alist").innerHTML=aList();return;}
   if(e.target.id==="cq"){ui.cq=e.target.value;document.getElementById("clist").innerHTML=catList();return;}
   if(e.target.id==="q"){ui.q=e.target.value;ui.lpage=1;document.getElementById("grid").innerHTML=libGrid();}});
-document.addEventListener("change",function(e){var m={"f-svc":"svc","f-depth":"depth","f-cat":"cat","f-gen":"gen","f-dec":"dec","f-status":"status","f-sort":"sort"}[e.target.id];if(m){ui[m]=e.target.value;ui.lpage=1;document.getElementById("grid").innerHTML=libGrid();}});
+document.addEventListener("change",function(e){
+  if(e.target.classList&&e.target.classList.contains("dwin")){var dk=e.target.getAttribute("data-k"),di=e.target.getAttribute("data-id"),dr=dk?cst(dk):st(di);if(e.target.value)dr.dw=e.target.value;else delete dr.dw;if(dk)putC(dk,dr);else put(di,dr);return;}
+  if(e.target.id==="rfile"&&e.target.files&&e.target.files[0]){var fr=new FileReader();fr.onload=function(){var t=document.getElementById("rtxt");if(t)t.value=fr.result;};fr.readAsText(e.target.files[0]);return;}var m={"f-svc":"svc","f-depth":"depth","f-cat":"cat","f-gen":"gen","f-dec":"dec","f-status":"status","f-sort":"sort"}[e.target.id];if(m){ui[m]=e.target.value;ui.lpage=1;document.getElementById("grid").innerHTML=libGrid();}});
 document.addEventListener("keydown",function(e){if(e.key==="Escape"&&(ui.open||ui.ocat)){ui.open=null;ui.ocat=null;sheet();}});
 window.addEventListener("hashchange",function(){ui.open=null;ui.ocat=null;render();window.scrollTo(0,0);});
 render();
