@@ -1,0 +1,88 @@
+name: Refresh and publish
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * 5"   # Thursday 10:23 PM Louisville (11:23 PM during daylight time)
+  workflow_dispatch:
+    inputs:
+      refresh:
+        description: "Pull fresh TMDB data before publishing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: site
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull TMDB and rebuild fresh.js
+        env:
+          TMDB_KEY: ${{ secrets.TMDB_KEY }}
+        run: |
+          if [ -z "$TMDB_KEY" ]; then echo "::error::Add the TMDB_KEY repository secret first."; exit 1; fi
+          python3 refresh/refresh.py --key "$TMDB_KEY" --tracked refresh/tracked.json --prev fresh.js --out fresh.next.js | tee summary.json
+
+      - name: Sanity check
+        run: |
+          head -c 15 fresh.next.js | grep -q "window.FRESH" || { echo "::error::Output is malformed"; exit 1; }
+          size=$(stat -c%s fresh.next.js); [ "$size" -gt 60000 ] || { echo "::error::Output too small ($size bytes)"; exit 1; }
+          python3 -c "import json,sys; s=json.load(open('summary.json')); sys.exit(0 if s['streaming_now']>=1500 else 1)" || { echo "::error::Too few streaming titles, keeping last week"; exit 1; }
+          mv fresh.next.js fresh.js
+
+      - name: Write run summary
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          s = json.load(open('summary.json'))
+          print(f"## Music Movie Brain refresh, {s['asof']}")
+          print(f"- Checked {s['checked']:,} titles, {s['streaming_now']:,} streaming")
+          print(f"- Landed on your services: {s['landed_on_my_services']} (all services: {s['landed_this_week']})")
+          print(f"- Left services: {s['left_this_week']}")
+          print(f"- New releases added: {s['new_releases_added']} " + ("(" + ", ".join(s['new_release_titles'][:5]) + ")" if s['new_release_titles'] else ""))
+          print("- Radar, next 7 days: " + (", ".join(s['radar_next_7_days']) or "none"))
+          PY
+
+      - name: Commit
+        run: |
+          git config user.name "music-brain-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add fresh.js
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git commit -m "Weekly refresh $(date -u +%F)"
+          git push
+
+  deploy:
+    needs: refresh
+    if: always() && (needs.refresh.result == 'success' || needs.refresh.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Stage site
+        run: |
+          mkdir _site
+          cp -r index.html fresh.js manifest.webmanifest sw.js assets .nojekyll _site/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
